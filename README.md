@@ -6,7 +6,7 @@ SQLクエリからテーブル名を抽出するRust製のコマンドライン�
 
 - 🗃️ **テーブル名抽出**: SQLクエリから参照されているテーブル名を自動抽出
 - 🔧 **複数ダイアレクト対応**: Generic SQL、PostgreSQL、MySQL、MS SQL、Snowflakeに対応
-- 🧩 **高度なSQL構文サポート**: CTE、サブクエリ、JOIN、セット演算を完全解析
+- 🧩 **高度なSQL構文サポート**: CTE、サブクエリ、JOIN、セット演算、CREATE VIEW文を完全解析
 - 📁 **柔軟な入力**: SQLファイル読み込みまたは直接文字列指定
 - ⚡ **高性能**: Rustによる高速処理と効率的なメモリ使用
 
@@ -42,6 +42,18 @@ SQLクエリからテーブル名を抽出するRust製のコマンドライン�
   FROM (SELECT ... FROM table1) AS derived
   ```
 
+- **CREATE VIEW文**
+  ```sql
+  CREATE OR REPLACE VIEW view_name AS
+  SELECT ... FROM table1 JOIN table2 ...
+  ```
+
+- **CREATE TABLE AS SELECT文**
+  ```sql
+  CREATE TABLE new_table AS
+  SELECT ... FROM existing_table
+  ```
+
 ## 📦 インストール
 
 ### 前提条件
@@ -50,11 +62,11 @@ SQLクエリからテーブル名を抽出するRust製のコマンドライン�
 ### ビルド
 ```bash
 git clone <repository-url>
-cd simple-sqlparser
+cd sqlparser
 cargo build --release
 ```
 
-実行ファイルは `target/release/simple-sqlparser` に生成されます。
+実行ファイルは `target/release/sqlparser` に生成されます。
 
 ## 🚀 使用方法
 
@@ -62,10 +74,10 @@ cargo build --release
 
 ```bash
 # SQLファイルから読み込み
-simple-sqlparser --dialect <dialect> --file <path>
+sqlparser --dialect <dialect> --file <path>
 
 # SQL文字列を直接指定
-simple-sqlparser --dialect <dialect> --sql "<sql_query>"
+sqlparser --dialect <dialect> --sql "<sql_query>"
 ```
 
 ### ダイアレクト指定
@@ -82,13 +94,13 @@ simple-sqlparser --dialect <dialect> --sql "<sql_query>"
 
 #### 1. シンプルなSQLファイルの解析
 ```bash
-$ simple-sqlparser --dialect postgres --file ./sql/sample1.sql
+$ sqlparser --dialect postgres --file ./sql/sample1.sql
 users
 ```
 
 #### 2. 複雑なクエリの解析
 ```bash
-$ simple-sqlparser --dialect postgres --file ./sql/complex.sql
+$ sqlparser --dialect postgres --file ./sql/complex.sql
 customers
 customer_stats
 order_items
@@ -99,14 +111,14 @@ recent_orders
 
 #### 3. 直接SQL文字列を指定
 ```bash
-$ simple-sqlparser --dialect mysql --sql "SELECT u.name, p.title FROM users u JOIN posts p ON u.id = p.user_id"
+$ sqlparser --dialect mysql --sql "SELECT u.name, p.title FROM users u JOIN posts p ON u.id = p.user_id"
 posts
 users
 ```
 
 #### 4. CTEを含む複雑なクエリ
 ```bash
-$ simple-sqlparser --dialect postgres --sql "
+$ sqlparser --dialect postgres --sql "
 WITH recent_orders AS (
     SELECT customer_id FROM orders WHERE date > '2023-01-01'
 )
@@ -118,18 +130,37 @@ orders
 recent_orders
 ```
 
+#### 5. CREATE VIEW文の解析
+```bash
+$ sqlparser --dialect generic --file ./sql/create_view_sample1.sql
+users
+```
+
+#### 6. CREATE VIEW文（複雑な例）
+```bash
+$ sqlparser --dialect postgres --sql "
+CREATE OR REPLACE VIEW customer_summary AS
+SELECT c.name, COUNT(o.id) as order_count
+FROM customers c 
+LEFT JOIN orders o ON c.id = o.customer_id 
+GROUP BY c.name"
+customers
+orders
+```
+
 ## 📁 プロジェクト構成
 
 ```
-simple-sqlparser/
+sqlparser/
 ├── Cargo.toml          # プロジェクト設定・依存関係
 ├── Cargo.lock          # 依存関係ロックファイル
 ├── README.md           # このファイル
 ├── docs/
 │   └── architecture.md # 詳細な設計文書
 ├── sql/
-│   ├── sample1.sql     # 基本テスト用SQL
-│   └── complex.sql     # 複雑なクエリテスト用SQL
+│   ├── sample1.sql            # 基本テスト用SQL
+│   ├── create_view_sample1.sql # CREATE VIEW テスト用SQL
+│   └── complex.sql            # 複雑なクエリテスト用SQL
 └── src/
     └── main.rs         # メインプログラム
 ```
@@ -149,25 +180,25 @@ simple-sqlparser/
 ### 1. データベース依存関係分析
 ```bash
 # アプリケーションで使用されているテーブルを調査
-simple-sqlparser --dialect postgres --file app_queries.sql > table_dependencies.txt
+sqlparser --dialect postgres --file app_queries.sql > table_dependencies.txt
 ```
 
 ### 2. SQLレビュー支援
 ```bash
 # プルリクエストでのSQL変更確認
-simple-sqlparser --dialect mysql --sql "$(cat new_feature.sql)"
+sqlparser --dialect mysql --sql "$(cat new_feature.sql)"
 ```
 
 ### 3. データマイグレーション計画
 ```bash
 # 複雑なクエリが参照するテーブル一覧を確認
-simple-sqlparser --dialect snowflake --file migration_script.sql
+sqlparser --dialect snowflake --file migration_script.sql
 ```
 
 ### 4. テスト用データ準備
 ```bash
 # テストで必要なテーブルを特定
-simple-sqlparser --dialect postgres --file test_queries.sql | xargs -I {} echo "TRUNCATE TABLE {};"
+sqlparser --dialect postgres --file test_queries.sql | xargs -I {} echo "TRUNCATE TABLE {};"
 ```
 
 ## ⚡ パフォーマンス
@@ -194,7 +225,7 @@ simple-sqlparser --dialect postgres --file test_queries.sql | xargs -I {} echo "
 
 ## 🚧 現在の制限事項
 
-- SELECT文のみ対応（INSERT/UPDATE/DELETE未対応）
+- SELECT文、CREATE VIEW文、CREATE TABLE AS SELECT文のみ対応（INSERT/UPDATE/DELETE未対応）
 - 関数内の式は未解析（`FUNCTION(SELECT ...)` 形式）
 - スキーマ情報の検証なし（存在しないテーブルでもエラーにならない）
 
@@ -227,5 +258,3 @@ simple-sqlparser --dialect postgres --file test_queries.sql | xargs -I {} echo "
 - **GitHub Discussions**: 一般的な質問・使用方法
 
 ---
-
-**Simple SQL Parser** - SQLクエリからテーブル依存関係を瞬時に抽出 🚀

@@ -19,7 +19,8 @@
 
 ## ASTの歩き方（どこからテーブルを拾うか）
 
-- 主対象は **SELECT系**（`Statement::Query`）。他のDMLは現状スキップ
+- 主対象は **SELECT系**（`Statement::Query`）と **DDL文**（`Statement::CreateView`, `Statement::CreateTable`）
+- INSERT/UPDATE/DELETE等の他のDMLは現状スキップ
 - **WITH/CTE**: `WITH`節内の各サブクエリも再帰的に解析
 - **クエリ本体（`Query.body`）** は `SetExpr` をキューで幅優先的に処理
   - `Select` → `FROM` / `JOIN` からテーブル名を取得
@@ -36,6 +37,16 @@
   - 複合式（`BinaryOp`/`UnaryOp`/`Case`/`Between`/`Tuple` 等）は中の式を順にたどる
   - `Function` 内部は現状スキップ（多くの場合テーブル抽出に不要）
 
+## DDL文の処理
+
+- **CREATE VIEW文**（`Statement::CreateView`）
+  - VIEW定義内のクエリ（`query`フィールド）を `collect_tables_from_query` で再帰的に解析
+  - `CREATE OR REPLACE VIEW` 文も同様に処理
+  - VIEWが参照するテーブル名をすべて抽出
+- **CREATE TABLE AS SELECT文**（`Statement::CreateTable`）
+  - `query` フィールドが存在する場合（CTAS）、そのクエリを再帰的に解析
+  - 通常の `CREATE TABLE` 文（`query` が `None`）はテーブル参照なしとしてスキップ
+
 ## データ構造と出力
 
 - **`BTreeSet<String>`** でテーブル名を重複なくソートしながら保持
@@ -50,16 +61,25 @@
 ## 実行例
 
 ```bash
+# SELECT文（CTE含む）
 cargo run -- --dialect postgres --sql "WITH c AS (SELECT * FROM s.t) SELECT * FROM c JOIN u.v ON c.id = v.id"
 
+# CREATE VIEW文
+cargo run -- --dialect generic --file ./sql/create_view_sample1.sql
+
+# シンプルなファイル読み込み
 cargo run -- --dialect mysql --file ./sql/sample1.sql
 ```
 
 出力例（ソート済み・重複なし）:
 
 ```text
+# CTE例の出力
 s.t
 u.v
+
+# CREATE VIEW例の出力
+users
 ```
 
 ## 実装のポイント（Rustを知らない方向け）
@@ -71,12 +91,14 @@ u.v
 
 ## 制限と拡張ポイント
 
-- 現状は `SELECT` 文のみを対象。他のDML（INSERT/UPDATE/DELETEなど）は未対応
+- 現状は `SELECT` 文、`CREATE VIEW` 文、`CREATE TABLE AS SELECT` 文に対応
+- 他のDML（INSERT/UPDATE/DELETEなど）は未対応
 - `TableFunction` や関数内のサブクエリ解析は省略中
 - 必要に応じて以下を拡張可能:
-  - DML文の対応追加
+  - 残りのDML文の対応追加（INSERT/UPDATE/DELETE）
   - 関数呼び出し内部の解析
   - `TableFunction` の対応
+  - その他のDDL文（CREATE INDEX、ALTER TABLEなど）の対応
 
 ## 処理フロー要約
 

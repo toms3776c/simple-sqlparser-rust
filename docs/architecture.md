@@ -36,6 +36,8 @@
    - ネストしたサブクエリ
    - 複数テーブルJOIN
    - セット演算 (UNION, INTERSECT, EXCEPT)
+   - CREATE VIEW文
+   - CREATE TABLE AS SELECT文
 
 3. **柔軟な入力方法**
    - SQLファイルからの読み込み
@@ -159,18 +161,23 @@ parse_sql_with_dialect()
 #### テーブル抽出機能階層
 ```
 extract_tables()
-└── collect_tables_from_query()
-    ├── WITH句処理 (CTE)
-    ├── collect_tables_from_select()
-    │   ├── from_table_with_joins()
-    │   │   ├── テーブル参照抽出
-    │   │   ├── JOIN処理
-    │   │   └── ネストJOIN処理
-    │   └── collect_tables_from_expr()
-    │       ├── サブクエリ抽出
-    │       ├── EXISTS/IN句処理
-    │       └── CASE/BETWEEN式処理
-    └── セット演算処理 (UNION等)
+├── Statement::Query処理
+│   └── collect_tables_from_query()
+│       ├── WITH句処理 (CTE)
+│       ├── collect_tables_from_select()
+│       │   ├── from_table_with_joins()
+│       │   │   ├── テーブル参照抽出
+│       │   │   ├── JOIN処理
+│       │   │   └── ネストJOIN処理
+│       │   └── collect_tables_from_expr()
+│       │       ├── サブクエリ抽出
+│       │       ├── EXISTS/IN句処理
+│       │       └── CASE/BETWEEN式処理
+│       └── セット演算処理 (UNION等)
+├── Statement::CreateView処理
+│   └── collect_tables_from_query() (再帰)
+└── Statement::CreateTable処理
+    └── collect_tables_from_query() (CTAS用)
 ```
 
 ### 対応SQL構文
@@ -208,6 +215,19 @@ extract_tables()
 - **派生テーブル**
   ```sql
   FROM (SELECT ... FROM table1) AS derived
+  ```
+
+#### DDL文サポート
+- **CREATE VIEW文**
+  ```sql
+  CREATE OR REPLACE VIEW view_name AS
+  SELECT ... FROM table1 JOIN table2 ...
+  ```
+
+- **CREATE TABLE AS SELECT文**
+  ```sql
+  CREATE TABLE new_table AS
+  SELECT ... FROM existing_table
   ```
 
 ## アルゴリズム設計
@@ -409,8 +429,13 @@ while let Some(expr) = queue.pop_front() {
 - BigQuery
 - Teradata
 
-#### 3. DML文対応
+#### 3. 追加DML/DDL文対応
 ```rust
+// 現在対応済み
+Statement::CreateView { query, .. } => collect_tables_from_query(query, &mut tables),
+Statement::CreateTable { query, .. } => { /* CTAS処理 */ },
+
+// 将来対応予定
 Statement::Insert(insert) => extract_from_insert(insert),
 Statement::Update(update) => extract_from_update(update), 
 Statement::Delete(delete) => extract_from_delete(delete),
@@ -429,7 +454,7 @@ Statement::Delete(delete) => extract_from_delete(delete),
 ### 現在の制限事項
 
 #### 対応範囲の制限
-1. **SELECT文のみ対応**: INSERT/UPDATE/DELETE未対応
+1. **DML文の一部未対応**: INSERT/UPDATE/DELETE未対応（SELECT, CREATE VIEW, CREATE TABLE AS SELECT は対応済み）
 2. **関数内式未解析**: `FUNCTION(SELECT ...)` 形式
 3. **オブジェクト種別未分類**: テーブル・ビュー・プロシージャの区別なし
 4. **スキーマ情報未検証**: 存在しないテーブルでもエラーにならない
@@ -467,6 +492,18 @@ match v.to_lowercase().as_str() {
 // extract_tables()関数を拡張
 match stmt {
     Statement::Query(q) => collect_tables_from_query(q, &mut tables),
+    
+    // 現在対応済み
+    Statement::CreateView { query, .. } => {
+        collect_tables_from_query(query, &mut tables);
+    }
+    Statement::CreateTable { query, .. } => {
+        if let Some(q) = query {
+            collect_tables_from_query(q, &mut tables);
+        }
+    }
+    
+    // 将来追加予定
     Statement::Insert(i) => collect_tables_from_insert(i, &mut tables),
     // 新しい文型への対応
 }
@@ -500,6 +537,14 @@ match stmt {
 
 #### sample1.sql (基本テスト)
 ```sql
+select name
+from users;
+```
+**期待結果**: `users`
+
+#### create_view_sample1.sql (CREATE VIEW テスト)
+```sql
+create or replace view v_sample1 as
 select name
 from users;
 ```
