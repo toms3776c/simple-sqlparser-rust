@@ -1,8 +1,8 @@
-# Simple SQL Parser アーキテクチャ設計書
+# SQL Parser アーキテクチャ設計書
 
 ## 概要
 
-`simple-sqlparser` は、SQLクエリからテーブル名を抽出するRust製のコマンドライン・ツールです。複数のSQLダイアレクトに対応し、複雑なSQL構文（CTE、サブクエリ、JOIN、セット演算など）を解析してテーブル依存関係を特定できます。
+`sqlparser` は、SQLクエリからテーブル名を抽出するRust製のコマンドライン・ツールです。複数のSQLダイアレクトに対応し、複雑なSQL構文（CTE、サブクエリ、JOIN、セット演算など）を解析してテーブル依存関係を特定できます。
 
 ## 目次
 
@@ -18,7 +18,7 @@
 ## プロジェクト概要
 
 ### 基本情報
-- **プロジェクト名**: simple-sqlparser
+- **プロジェクト名**: sqlparser
 - **バージョン**: 0.1.0
 - **言語**: Rust (edition 2024)
 - **主要依存関係**: sqlparser 0.47
@@ -30,6 +30,11 @@
    - MySQL
    - Microsoft SQL Server
    - Snowflake
+   - Google BigQuery
+   - SQLite
+   - Apache Hive
+   - ANSI SQL標準
+   - Amazon Redshift
 
 2. **高度なSQL構文サポート**
    - CTE (Common Table Expression)
@@ -50,23 +55,65 @@
 ```mermaid
 graph TD
     A["コマンドライン引数"] --> B["parse_args()"]
-    B --> C["CliArgs構造体"]
+    B --> C["CliArgs構造体<br/>(dialect: DialectKind<br/>sql: String)"]
     C --> D["parse_sql_with_dialect()"]
-    D --> E["sqlparser::Parser"]
-    E --> F["AST (Abstract Syntax Tree)"]
-    F --> G["extract_tables()"]
-    G --> H["collect_tables_from_query()"]
-    H --> I["collect_tables_from_select()"]
-    H --> J["collect_tables_from_expr()"]
-    I --> K["from_table_with_joins()"]
-    I --> J
-    J --> L["BTreeSet<String>"]
+    D --> E["ダイアレクト選択<br/>(10種類対応)"]
+    E --> F["GenericDialect"] 
+    E --> G["PostgreSqlDialect"]
+    E --> H["MySqlDialect"]
+    E --> I["BigQueryDialect"]
+    E --> J["RedshiftSqlDialect"]
+    E --> K["その他ダイアレクト<br/>(SQLite/Hive/ANSI/MS SQL/Snowflake)"]
+    
+    F --> L["sqlparser::Parser"]
+    G --> L
+    H --> L
+    I --> L
+    J --> L
     K --> L
-    L --> M["テーブル名リスト出力"]
+    
+    L --> M["AST<br/>(Abstract Syntax Tree)"]
+    M --> N["extract_tables()"]
+    N --> O["Statement分岐"]
+    
+    O --> P["Statement::Query"]
+    O --> Q["Statement::CreateView"]
+    O --> R["Statement::CreateTable"]
+    O --> S["その他Statement<br/>(スキップ)"]
+    
+    P --> T["collect_tables_from_query()"]
+    Q --> T
+    R --> T
+    
+    T --> U["WITH句処理<br/>(CTE)"]
+    T --> V["SetExpr処理<br/>(キュー方式)"]
+    
+    V --> W["collect_tables_from_select()"]
+    W --> X["from_table_with_joins()"]
+    W --> Y["collect_tables_from_expr()"]
+    
+    X --> Z["from_table_with_joins_single()"]
+    Z --> AA["テーブル参照抽出"]
+    Z --> BB["JOIN処理"]
+    Z --> CC["NestedJoin処理"]
+    
+    Y --> DD["サブクエリ検出<br/>(InSubquery/Exists/Subquery)"]
+    Y --> EE["式の再帰処理<br/>(BinaryOp/UnaryOp/Case等)"]
+    
+    U --> FF["BTreeSet&lt;String&gt;<br/>(重複排除・ソート)"]
+    AA --> FF
+    BB --> FF
+    CC --> FF
+    DD --> FF
+    EE --> FF
+    
+    FF --> GG["テーブル名リスト出力<br/>(標準出力)"]
     
     style A fill:#e1f5fe
-    style M fill:#c8e6c9
-    style L fill:#fff3e0
+    style E fill:#fff3e0
+    style O fill:#f3e5f5
+    style FF fill:#e8f5e8
+    style GG fill:#c8e6c9
 ```
 
 ### データフロー
@@ -74,19 +121,37 @@ graph TD
 ```mermaid
 sequenceDiagram
     participant CLI as コマンドライン
-    participant Parser as 引数パーサー
-    participant SQLParser as SQLパーサー
-    participant Extractor as テーブル抽出器
-    participant Output as 出力
+    participant Args as parse_args()
+    participant Dialect as ダイアレクト選択
+    participant SQLParser as sqlparser::Parser
+    participant Extractor as extract_tables()
+    participant Collector as collect_tables_*()
+    participant Output as 標準出力
     
-    CLI->>Parser: コマンドライン引数
-    Parser->>Parser: 引数検証・ダイアレクト選択
-    Parser->>SQLParser: SQL文字列 + ダイアレクト
-    SQLParser->>SQLParser: AST生成
-    SQLParser->>Extractor: Statement配列
-    Extractor->>Extractor: 再帰的テーブル抽出
-    Extractor->>Output: BTreeSet<String>
-    Output->>CLI: テーブル名リスト
+    CLI->>Args: --dialect <type> --file/--sql
+    Args->>Args: 引数検証・DialectKind決定
+    Args->>Dialect: DialectKind
+    Dialect->>Dialect: Box<dyn Dialect>生成<br/>(10種類から選択)
+    Dialect->>SQLParser: SQL文字列 + Dialect実装
+    SQLParser->>SQLParser: AST生成<br/>(Statement配列)
+    SQLParser->>Extractor: Vec<Statement>
+    
+    loop Statement毎の処理
+        alt Statement::Query
+            Extractor->>Collector: collect_tables_from_query()
+        else Statement::CreateView
+            Extractor->>Collector: collect_tables_from_query()
+        else Statement::CreateTable (CTAS)
+            Extractor->>Collector: collect_tables_from_query()
+        else その他
+            Extractor->>Extractor: スキップ
+        end
+    end
+    
+    Collector->>Collector: 再帰的AST走査<br/>(CTE/JOIN/サブクエリ)
+    Collector->>Extractor: BTreeSet<String>更新
+    Extractor->>Output: ソート済みテーブル名
+    Output->>CLI: 1行ずつ出力
 ```
 
 ### モジュール構成
@@ -243,34 +308,76 @@ extract_tables()
 
 ```mermaid
 graph TD
-    A["Query"] --> B["WITH句処理"]
-    A --> C["SetExpr処理"]
+    A["Statement分岐"] --> B["Statement::Query"]
+    A --> C["Statement::CreateView"]
+    A --> D["Statement::CreateTable"]
+    A --> E["その他Statement"]
     
-    B --> D["CTE個別処理"]
-    D --> E["再帰: collect_tables_from_query"]
+    B --> F["collect_tables_from_query()"]
+    C --> F
+    D --> G{"query フィールド存在?"}
+    E --> H["スキップ"]
     
-    C --> F{"SetExpr種別判定"}
-    F --> G["Select"]
-    F --> H["Query"]
-    F --> I["SetOperation"]
-    F --> J["Values"]
+    G -->|Yes CTAS| F
+    G -->|No 通常CREATE| H
     
-    G --> K["collect_tables_from_select"]
-    H --> L["再帰: collect_tables_from_query"]
-    I --> M["left/right をキューに追加"]
-    J --> N["処理なし"]
+    F --> I["WITH句処理"]
+    F --> J["SetExpr処理<br/>(VecDeque)"]
     
-    K --> O["FROM句処理"]
-    K --> P["SELECT句内式処理"]
-    K --> Q["WHERE/HAVING句処理"]
+    I --> K["CTE個別処理"]
+    K --> L["再帰: collect_tables_from_query"]
     
-    O --> R["from_table_with_joins"]
-    P --> S["collect_tables_from_expr"]
-    Q --> S
+    J --> M{"SetExpr種別判定"}
+    M --> N["Select"]
+    M --> O["Query"]
+    M --> P["SetOperation"]
+    M --> Q["Values"]
+    
+    N --> R["collect_tables_from_select"]
+    O --> S["再帰: collect_tables_from_query"]
+    P --> T["left/right をキューに追加"]
+    Q --> U["処理なし"]
+    
+    R --> V["from_table_with_joins"]
+    R --> W["SELECT句内式処理"]
+    R --> X["WHERE/HAVING句処理"]
+    
+    V --> Y["from_table_with_joins_single<br/>(各TableWithJoins)"]
+    W --> Z["collect_tables_from_expr"]
+    X --> Z
+    
+    Y --> AA["TableFactor分岐"]
+    AA --> BB["Table: テーブル名抽出"]
+    AA --> CC["Derived: サブクエリ再帰"]
+    AA --> DD["NestedJoin: 入れ子JOIN処理"]
+    AA --> EE["JOIN処理"]
+    
+    Z --> FF["式の種別判定"]
+    FF --> GG["InSubquery/Exists/Subquery"]
+    FF --> HH["BinaryOp/UnaryOp"]
+    FF --> II["Case/Between/Tuple"]
+    FF --> JJ["その他式"]
+    
+    GG --> KK["サブクエリ再帰"]
+    HH --> LL["左右の式を再帰処理"]
+    II --> MM["構成要素を再帰処理"]
+    
+    BB --> NN["BTreeSet&lt;String&gt;"]
+    CC --> NN
+    DD --> NN
+    EE --> NN
+    KK --> NN
+    LL --> NN
+    MM --> NN
+    L --> NN
+    S --> NN
     
     style A fill:#e3f2fd
-    style K fill:#f3e5f5
-    style S fill:#e8f5e8
+    style F fill:#f3e5f5
+    style R fill:#fff3e0
+    style Y fill:#e8f5e8
+    style Z fill:#e8f5e8
+    style NN fill:#c8e6c9
 ```
 
 #### パフォーマンス特性
@@ -322,11 +429,11 @@ match expr {
 
 ```bash
 # 基本使用法
-simple-sqlparser --dialect <dialect> --file <path>
-simple-sqlparser --dialect <dialect> --sql "<sql_query>"
+sqlparser --dialect <dialect> --file <path>
+sqlparser --dialect <dialect> --sql "<sql_query>"
 
 # パラメータ詳細
---dialect <value>   # 必須: generic|postgres|mysql|mssql|snowflake
+--dialect <value>   # 必須: generic|postgres|mysql|mssql|snowflake|bigquery|sqlite|hive|ansi|redshift
 --file <path>       # SQLファイルパス (--sqlと排他)
 --sql "<query>"     # SQL文字列直接指定 (--fileと排他)
 ```
@@ -335,7 +442,7 @@ simple-sqlparser --dialect <dialect> --sql "<sql_query>"
 
 ```bash
 # ファイルから読み込み
-$ simple-sqlparser --dialect postgres --file ./sql/complex.sql
+$ sqlparser --dialect postgres --file ./sql/complex.sql
 customers
 orders
 order_items
@@ -343,10 +450,22 @@ products
 customer_stats
 recent_orders
 
-# SQL文字列を直接指定
-$ simple-sqlparser --dialect mysql --sql "SELECT * FROM users JOIN profiles USING(id)"
+# 各ダイアレクト別の使用例
+$ sqlparser --dialect mysql --sql "SELECT * FROM users JOIN profiles USING(id)"
 users
 profiles
+
+$ sqlparser --dialect bigquery --sql "SELECT * FROM project_dataset_table"
+project_dataset_table
+
+$ sqlparser --dialect sqlite --sql "SELECT * FROM users LIMIT 10"
+users
+
+$ sqlparser --dialect hive --sql "SELECT * FROM warehouse.users WHERE year=2023"
+warehouse.users
+
+$ sqlparser --dialect redshift --sql "SELECT * FROM sales.orders"
+sales.orders
 ```
 
 ### 出力形式
@@ -424,10 +543,31 @@ while let Some(expr) = queue.pop_front() {
 - **再帰CTE**: `WITH RECURSIVE ...`
 
 #### 2. 新しいSQLダイアレクト
+現在対応済みのダイアレクト一覧：
+
+**クラウドデータウェアハウス**
+- ✅ Google BigQuery (bigquery)
+- ✅ Snowflake (snowflake)
+- ✅ Amazon Redshift (redshift)
+
+**従来型データベース**
+- ✅ PostgreSQL (postgres/postgresql)
+- ✅ MySQL (mysql)
+- ✅ Microsoft SQL Server (mssql)
+- ✅ SQLite (sqlite)
+
+**ビッグデータ・分析**
+- ✅ Apache Hive (hive)
+
+**標準・汎用**
+- ✅ ANSI SQL標準 (ansi)
+- ✅ 汎用SQL (generic)
+
+**将来対応候補**
 - Oracle Database
-- SQLite
-- BigQuery
 - Teradata
+- DuckDB
+- ClickHouse
 
 #### 3. 追加DML/DDL文対応
 ```rust
@@ -594,6 +734,6 @@ recent_orders
 
 ## 結論
 
-`simple-sqlparser` は、単一ファイル構成でありながら、複雑なSQL構文に対応した堅牢で拡張可能なアーキテクチャを持つツールです。Rustの所有権システムとsqlparserライブラリを活用することで、高性能で安全なSQL解析を実現しています。
+`sqlparser` は、単一ファイル構成でありながら、複雑なSQL構文に対応した堅牢で拡張可能なアーキテクチャを持つツールです。Rustの所有権システムとsqlparserライブラリを活用することで、高性能で安全なSQL解析を実現しています。
 
 明確な責任分離、再帰的な探索アルゴリズム、効率的なデータ構造の選択により、保守性と性能を両立した設計となっています。今後の機能拡張や新しいSQLダイアレクトへの対応も容易に行える柔軟性を備えています。

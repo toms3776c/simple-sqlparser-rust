@@ -5,7 +5,7 @@ SQLクエリからテーブル名を抽出するRust製のコマンドライン�
 ## ✨ 主な機能
 
 - 🗃️ **テーブル名抽出**: SQLクエリから参照されているテーブル名を自動抽出
-- 🔧 **複数ダイアレクト対応**: Generic SQL、PostgreSQL、MySQL、MS SQL、Snowflakeに対応
+- 🔧 **複数ダイアレクト対応**: 10種類のSQLダイアレクト（Generic、PostgreSQL、MySQL、MS SQL、Snowflake、BigQuery、SQLite、Hive、ANSI、Redshift）に対応
 - 🧩 **高度なSQL構文サポート**: CTE、サブクエリ、JOIN、セット演算、CREATE VIEW文を完全解析
 - 📁 **柔軟な入力**: SQLファイル読み込みまたは直接文字列指定
 - ⚡ **高性能**: Rustによる高速処理と効率的なメモリ使用
@@ -82,13 +82,18 @@ sqlparser --dialect <dialect> --sql "<sql_query>"
 
 ### ダイアレクト指定
 
-| パラメータ | 対応データベース |
-|-----------|-----------------|
-| `generic` | 汎用SQL |
-| `postgres` | PostgreSQL |
-| `mysql` | MySQL |
-| `mssql` | Microsoft SQL Server |
-| `snowflake` | Snowflake |
+| パラメータ | 対応データベース | カテゴリ |
+|-----------|-----------------|----------|
+| `generic` | 汎用SQL | 標準・汎用 |
+| `ansi` | ANSI SQL標準 | 標準・汎用 |
+| `postgres`/`postgresql` | PostgreSQL | 従来型DB |
+| `mysql` | MySQL | 従来型DB |
+| `mssql` | Microsoft SQL Server | 従来型DB |
+| `sqlite` | SQLite | 従来型DB |
+| `snowflake` | Snowflake | クラウドDWH |
+| `bigquery` | Google BigQuery | クラウドDWH |
+| `redshift` | Amazon Redshift | クラウドDWH |
+| `hive` | Apache Hive | ビッグデータ |
 
 ### 使用例
 
@@ -146,6 +151,30 @@ LEFT JOIN orders o ON c.id = o.customer_id
 GROUP BY c.name"
 customers
 orders
+```
+
+#### 7. 新しいダイアレクトの使用例
+
+```bash
+# BigQuery
+$ sqlparser --dialect bigquery --sql "SELECT * FROM project_dataset_table"
+project_dataset_table
+
+# SQLite
+$ sqlparser --dialect sqlite --sql "SELECT * FROM users LIMIT 10"
+users
+
+# Apache Hive
+$ sqlparser --dialect hive --sql "SELECT * FROM warehouse.users WHERE year=2023"
+warehouse.users
+
+# Amazon Redshift
+$ sqlparser --dialect redshift --sql "SELECT * FROM sales.orders WHERE date >= '2023-01-01'"
+sales.orders
+
+# ANSI SQL
+$ sqlparser --dialect ansi --sql "SELECT name FROM customers"
+customers
 ```
 
 ## 📁 プロジェクト構成
@@ -206,6 +235,7 @@ sqlparser --dialect postgres --file test_queries.sql | xargs -I {} echo "TRUNCAT
 - **時間計算量**: O(n) - nはSQL AST のノード数
 - **空間計算量**: O(m) - mは一意なテーブル名数
 - **処理能力**: 中規模のSQLファイル（数千行）を数ミリ秒で処理
+- **ダイアレクト対応**: 10種類のSQLダイアレクトに対応
 
 ## 🛠️ 技術仕様
 
@@ -232,10 +262,12 @@ sqlparser --dialect postgres --file test_queries.sql | xargs -I {} echo "TRUNCAT
 ## 🔮 今後の拡張予定
 
 - [ ] DML文対応（INSERT/UPDATE/DELETE）
-- [ ] 新しいSQLダイアレクト（Oracle、SQLite、BigQuery）
+- [ ] 追加SQLダイアレクト（Oracle、Teradata、DuckDB、ClickHouse）
 - [ ] JSON/XML出力形式サポート
 - [ ] テーブル種別判定（テーブル vs ビュー vs CTE）
 - [ ] 列レベル依存関係分析
+- [ ] ダイアレクト固有構文の詳細対応
+- [ ] パフォーマンス最適化
 
 ## 🤝 コントリビューション
 

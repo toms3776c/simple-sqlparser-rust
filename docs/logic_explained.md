@@ -1,7 +1,7 @@
 ## 何をするプログラムか（全体像）
 
 - **目的**: 入力されたSQLを解析し、その中で参照されているテーブル名を重複なく一覧出力するCLIツール
-- **対応方言**: `generic / postgres / mysql / mssql / snowflake`
+- **対応方言**: `generic / postgres / mysql / mssql / snowflake / bigquery / sqlite / hive / ansi / redshift`
 - **入力方法**: `--file`（SQLファイル）または `--sql`（直接文字列）
 - **出力**: テーブル名を1行ずつ標準出力（重複排除・ソート済み）
 
@@ -69,6 +69,13 @@ cargo run -- --dialect generic --file ./sql/create_view_sample1.sql
 
 # シンプルなファイル読み込み
 cargo run -- --dialect mysql --file ./sql/sample1.sql
+
+# 新しいダイアレクトの例
+cargo run -- --dialect bigquery --sql "SELECT * FROM project_dataset_table"
+cargo run -- --dialect sqlite --sql "SELECT * FROM users LIMIT 10"
+cargo run -- --dialect hive --sql "SELECT * FROM warehouse.users WHERE year=2023"
+cargo run -- --dialect redshift --sql "SELECT * FROM sales.orders WHERE date >= '2023-01-01'"
+cargo run -- --dialect ansi --sql "SELECT name FROM customers"
 ```
 
 出力例（ソート済み・重複なし）:
@@ -80,6 +87,12 @@ u.v
 
 # CREATE VIEW例の出力
 users
+
+# 新しいダイアレクト例の出力
+project_dataset_table
+warehouse.users
+sales.orders
+customers
 ```
 
 ## 実装のポイント（Rustを知らない方向け）
