@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use sqlparser::ast::*;
-use sqlparser::dialect::{Dialect, GenericDialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SnowflakeDialect};
+use sqlparser::dialect::{Dialect, GenericDialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SnowflakeDialect, BigQueryDialect, SQLiteDialect, HiveDialect, AnsiDialect, RedshiftSqlDialect};
 use sqlparser::parser::Parser;
 
 #[derive(Debug, Clone, Copy)]
@@ -13,6 +13,11 @@ enum DialectKind {
     MySql,
     MsSql,
     Snowflake,
+    BigQuery,
+    SQLite,
+    Hive,
+    Ansi,
+    Redshift,
 }
 
 fn parse_sql_with_dialect(sql: &str, dialect: DialectKind) -> Result<Vec<Statement>, String> {
@@ -22,6 +27,11 @@ fn parse_sql_with_dialect(sql: &str, dialect: DialectKind) -> Result<Vec<Stateme
         DialectKind::MySql => Box::new(MySqlDialect {}),
         DialectKind::MsSql => Box::new(MsSqlDialect {}),
         DialectKind::Snowflake => Box::new(SnowflakeDialect {}),
+        DialectKind::BigQuery => Box::new(BigQueryDialect {}),
+        DialectKind::SQLite => Box::new(SQLiteDialect {}),
+        DialectKind::Hive => Box::new(HiveDialect {}),
+        DialectKind::Ansi => Box::new(AnsiDialect {}),
+        DialectKind::Redshift => Box::new(RedshiftSqlDialect {}),
     };
     Parser::parse_sql(&*dialect_impl, sql).map_err(|e| e.to_string())
 }
@@ -220,6 +230,11 @@ fn parse_args() -> Result<CliArgs, String> {
                     "mysql" => DialectKind::MySql,
                     "mssql" => DialectKind::MsSql,
                     "snowflake" => DialectKind::Snowflake,
+                    "bigquery" => DialectKind::BigQuery,
+                    "sqlite" => DialectKind::SQLite,
+                    "hive" => DialectKind::Hive,
+                    "ansi" => DialectKind::Ansi,
+                    "redshift" => DialectKind::Redshift,
                     _ => return Err(format!("未知のdialect: {}", v)),
                 };
             }
@@ -243,7 +258,7 @@ fn main() {
         Ok(a) => a,
         Err(e) => {
             eprintln!(
-                "使い方: my_rust_project --dialect <generic|postgres|mysql|mssql|snowflake> (--file <path> | --sql \"...\")\nエラー: {}",
+                "使い方: sqlparser --dialect <generic|postgres|mysql|mssql|snowflake|bigquery|sqlite|hive|ansi|redshift> (--file <path> | --sql \"...\")\nエラー: {}",
                 e
             );
             std::process::exit(2);
