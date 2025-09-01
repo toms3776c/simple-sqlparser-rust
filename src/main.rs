@@ -63,41 +63,18 @@ fn object_name_to_string(name: &ObjectName) -> String {
 
 // 補助: なし（シンプルに副作用で集計）
 
-fn from_table_with_joins(select: &Select, out: &mut BTreeSet<String>) {
-    for twj in &select.from {
-        match &twj.relation {
-            TableFactor::Table { name, .. } => {
-                out.insert(object_name_to_string(name));
-            }
-            TableFactor::Derived { subquery, .. } => {
-                collect_tables_from_query(subquery, out);
-            }
-            TableFactor::TableFunction { .. } => {}
-            TableFactor::NestedJoin { table_with_joins: nested, .. } => {
-                // ( ... ) の中身
-                match &nested.relation {
-                    TableFactor::Table { name, .. } => {
-                        out.insert(object_name_to_string(&name));
-                    }
-                    TableFactor::Derived { subquery, .. } => {
-                        collect_tables_from_query(&subquery, out);
-                    }
-                    _ => {}
-                }
-                for j in &nested.joins {
-                    if let TableFactor::Table { name, .. } = &j.relation {
-                        out.insert(object_name_to_string(&name));
-                    } else if let TableFactor::Derived { subquery, .. } = &j.relation {
-                        collect_tables_from_query(&subquery, out);
-                    }
-                }
-            }
-            _ => {}
+fn from_table_with_joins_single(twj: &TableWithJoins, out: &mut BTreeSet<String>) {
+    match &twj.relation {
+        TableFactor::Table { name, .. } => {
+            out.insert(object_name_to_string(name));
         }
-
-        // JOIN 側
-        for j in &twj.joins {
-            match &j.relation {
+        TableFactor::Derived { subquery, .. } => {
+            collect_tables_from_query(subquery, out);
+        }
+        TableFactor::TableFunction { .. } => {}
+        TableFactor::NestedJoin { table_with_joins: nested, .. } => {
+            // ( ... ) の中身
+            match &nested.relation {
                 TableFactor::Table { name, .. } => {
                     out.insert(object_name_to_string(&name));
                 }
@@ -106,7 +83,34 @@ fn from_table_with_joins(select: &Select, out: &mut BTreeSet<String>) {
                 }
                 _ => {}
             }
+            for j in &nested.joins {
+                if let TableFactor::Table { name, .. } = &j.relation {
+                    out.insert(object_name_to_string(&name));
+                } else if let TableFactor::Derived { subquery, .. } = &j.relation {
+                    collect_tables_from_query(&subquery, out);
+                }
+            }
         }
+        _ => {}
+    }
+
+    // JOIN 側
+    for j in &twj.joins {
+        match &j.relation {
+            TableFactor::Table { name, .. } => {
+                out.insert(object_name_to_string(&name));
+            }
+            TableFactor::Derived { subquery, .. } => {
+                collect_tables_from_query(&subquery, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn from_table_with_joins(select: &Select, out: &mut BTreeSet<String>) {
+    for twj in &select.from {
+        from_table_with_joins_single(twj, out);
     }
 }
 
@@ -171,8 +175,25 @@ fn extract_tables(statements: &[Statement]) -> BTreeSet<String> {
     for stmt in statements {
         match stmt {
             Statement::Query(q) => collect_tables_from_query(q, &mut tables),
-            // まずはSELECT系のみ対応。必要に応じて他のDMLも拡張可能。
-            _ => {}
+            
+            // CREATE VIEW文の対応
+            Statement::CreateView { query, .. } => {
+                collect_tables_from_query(query, &mut tables);
+            }
+            
+            // CREATE TABLE AS SELECT文の対応
+            Statement::CreateTable { query, .. } => {
+                if let Some(q) = query {
+                    collect_tables_from_query(q, &mut tables);
+                }
+            }
+            
+            // その他のDML/DDL文のサポートは将来追加予定
+            // INSERT, UPDATE, DELETE文等も今後対応可能
+            _ => {
+                // 他のSQL文タイプは今のところスキップ
+                // 必要に応じて段階的に追加していく
+            }
         }
     }
     tables
